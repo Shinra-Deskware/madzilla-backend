@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>Invoice</title>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 40px;
+            color: #333;
+            font-size: 13px;
+        }
+
+        /* Header */
+        .top-section {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .company-logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .company-logo img {
+            height: 55px;
+        }
+
+        .logo-header {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        .invoice-heading {
+            display: flex;
+            align-items: center;
+            font-size: 26px;
+            font-weight: bold;
+            margin: 15px 0;
+            justify-content: center;
+        }
+
+        .divider {
+            border: 0;
+            border-top: 2px solid #4e4f50;
+            margin: 20px 0;
+        }
+
+        /* Info Sections */
+        .section-title,
+        .box-title,
+        .box-title-term {
+            font-weight: bold;
+            font-size: 14px;
+            margin-bottom: 6px;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: flex-start;
+            gap: 40px;
+            align-items: flex-start;
+        }
+
+        .info-box {
+            width: 46%;
+        }
+
+        .company-box {
+            width: auto !important;
+        }
+
+        .company-box table {
+            width: auto !important;
+        }
+
+        .info-box table,
+        .info-box td {
+            border: none !important;
+            background: transparent !important;
+            padding: 3px 0;
+        }
+
+        .info-box td:first-child {
+            font-weight: bold;
+            padding-right: 6px;
+            white-space: nowrap;
+        }
+
+        /* Items Table */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 5px;
+        }
+
+        th {
+            background: #4a4b4c;
+            color: #fff;
+            padding: 8px;
+            text-align: left;
+        }
+
+        td {
+            padding: 8px;
+            border: 1px solid #ddd;
+        }
+
+        .total-row {
+            font-weight: bold;
+            background: #fff;
+        }
+
+        .right {
+            text-align: right;
+        }
+
+        /* Footer (Order info + terms) */
+        .payment-terms {
+            margin-top: 30px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .footer-box {
+            width: 50%;
+        }
+
+        .footer-box table,
+        .footer-box td {
+            border: none !important;
+            padding: 3px 0;
+        }
+
+        .footer-box td:first-child {
+            font-weight: bold;
+            padding-right: 6px;
+            white-space: nowrap;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Header -->
+    <div class="top-section">
+        <div class="company-logo">
+            <img src="data:image/png;base64,<%= invoice.company.logoBase64 %>" />
+            <div class="logo-header">
+                <div style="font-size:20px; font-weight:700;">
+                    <%= invoice.company.name %>
+                </div>
+                <div style="font-size:14px; font-weight:300;">
+                    <%= invoice.company.description %>
+                </div>
+            </div>
+        </div>
+
+        <div class="info-box company-box">
+            <table>
+                <tr>
+                    <td>
+                        <%= invoice.company.name %>
+                    </td>
+                </tr>
+                <tr>
+                    <td>
+                        <%= invoice.company.phone %>
+                    </td>
+                </tr>
+                <tr>
+                    <td>
+                        <%= invoice.company.email %>
+                    </td>
+                </tr>
+                <tr>
+                    <td><span style="max-width:230px; display:inline-block;">
+                            <%= invoice.company.address %>
+                        </span></td>
+                </tr>
+            </table>
+        </div>
+    </div>
+
+    <hr class="divider" />
+
+    <div class="invoice-heading">
+        Invoice
+    </div>
+
+    <!-- Customer Info -->
+    <div class="info-row">
+        <div class="info-box">
+            <div class="section-title">Customer Information</div>
+            <table>
+                <tr>
+                    <td>Name</td>
+                    <td>: <%= invoice.customer.name %>
+                    </td>
+                </tr>
+                <tr>
+                    <td>Phone</td>
+                    <td>: <%= invoice.customer.phone %>
+                    </td>
+                </tr>
+                <tr>
+                    <td>Email</td>
+                    <td>: <%= invoice.customer.email %>
+                    </td>
+                </tr>
+                <tr>
+                    <td>Address</td>
+                    <td>: <span style="max-width:230px; display:inline-block;">
+                            <%= invoice.customer.address %>
+                        </span></td>
+                </tr>
+            </table>
+        </div>
+    </div>
+
+    <!-- Items -->
+    <table style="margin-top: 15px;">
+        <thead>
+            <tr>
+                <th>No.</th>
+                <th>Description</th>
+                <th>Quantity</th>
+                <th>Unit Price</th>
+                <th>Subtotal</th>
+            </tr>
+        </thead>
+        <tbody>
+            <% invoice.items.forEach(item=> { %>
+                <tr>
+                    <td>
+                        <%= item.no %>
+                    </td>
+                    <td>
+                        <%= item.description %>
+                    </td>
+                    <td>
+                        <%= item.qty %>
+                    </td>
+                    <td>₹<%= Number(item.unitPrice).toLocaleString() %>
+                    </td>
+                    <td>₹<%= Number(item.subtotal).toLocaleString() %>
+                    </td>
+                </tr>
+                <% }) %>
+
+                    <tr class="total-row">
+                        <td colspan="4" class="right">Total Amount Paid</td>
+                        <td>₹<%= Number(invoice.total).toLocaleString() %>
+                        </td>
+                    </tr>
+        </tbody>
+    </table>
+
+    <!-- Footer -->
+    <div class="payment-terms">
+        <div class="footer-box">
+            <div class="box-title">Order Information</div>
+            <table>
+                <tr>
+                    <td>Status</td>
+                    <td>: <%= invoice.orderInfo.orderStatus %>
+                    </td>
+                </tr>
+                <tr>
+                    <td>Order ID</td>
+                    <td>: <%= invoice.orderInfo.orderId %>
+                    </td>
+                </tr>
+                <tr>
+                    <td>Order Date</td>
+                    <td>
+                        :
+                        <%= new Date(invoice.orderInfo.createdAt) .toLocaleString("en-IN", { day: "2-digit" ,
+                            month: "short" , year: "numeric" , hour: "2-digit" , minute: "2-digit" }) %>
+                    </td>
+                </tr>
+
+                <% if (invoice.orderInfo.deliveredDate) { %>
+                    <tr>
+                        <td>Delivered Date</td>
+                        <td>
+                            :
+                            <%= new Date(invoice.orderInfo.deliveredDate) .toLocaleString("en-IN", { day: "2-digit" ,
+                                month: "short" , year: "numeric" , hour: "2-digit" , minute: "2-digit" }) %>
+                        </td>
+                    </tr>
+                    <% } %>
+                        <% if (invoice.orderInfo.trackingId) { %>
+                            <tr>
+                                <td>Tracking ID</td>
+                                <td>: <%= invoice.orderInfo.trackingId %>
+                                </td>
+                            </tr>
+                            <% } %>
+                                <tr>
+                                    <td>Payment Method</td>
+                                    <td>: <%= invoice.orderInfo.paymentMethod %>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td>Payment Status</td>
+                                    <td>: <%= invoice.orderInfo.paymentStatus %>
+                                    </td>
+                                </tr>
+            </table>
+        </div>
+    </div>
+    <br><br>
+
+    <!-- ✅ Fixed stamp position without creating empty space -->
+    <div style="position: relative; height: 120px; margin-top: 10px;">
+        <div style="position: absolute; right: 0; bottom: 0; text-align:center;">
+            <img src="data:image/png;base64,<%= invoice.company.stampBase64 %>" style="height:75px; opacity:0.55;" />
+
+            <div style="border-top:1px solid #333; width:170px; margin:5px auto 0;"></div>
+            <div style="font-size:12px; margin-top:3px;">
+                Authorized Stamp
+            </div>
+        </div>
+    </div>
+
+</body>
+<!-- ✅ Footer Terms placed at bottom after content -->
+<div style="text-align:center; margin-top:40px; font-size:13px;">
+
+    <div style="font-weight:bold; margin-bottom:8px;">
+        -------------------------------- Terms & Conditions --------------------------------
+    </div>
+
+    <ul style="list-style: disc; text-align:left; display:inline-block; margin:0; padding-left:18px;">
+        <% invoice.terms.forEach(t=> { %>
+            <li>
+                <%= t %>
+            </li>
+            <% }) %>
+    </ul>
+</div>
+
+</html>
