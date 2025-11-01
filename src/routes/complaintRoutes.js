@@ -19,18 +19,24 @@ router.post("/", async (req, res) => {
         if (!order)
             return res.status(404).json({ success: false, msg: "Order not found" });
 
-        // ensure not already in return flow
-        if (["RETURN_REQUESTED", "RETURN_ACCEPTED", "RETURN_RECEIVED", "RETURN_REJECTED", "RETURNED"]
-            .includes(order.status)
+        // ❗ Only block if RETURN in progress AND request is RETURN
+        if (
+            type === "RETURN" &&
+            [
+                ORDER_STATUS.RETURN_REQUESTED,
+                ORDER_STATUS.RETURN_ACCEPTED,
+                ORDER_STATUS.RETURN_RECEIVED,
+                ORDER_STATUS.RETURN_REJECTED,
+                ORDER_STATUS.RETURNED
+            ].includes(order.status)
         ) {
             return res.status(400).json({ success: false, msg: "Return already in process" });
         }
 
-        // Allow RETURN only if delivered
+        // ✅ RETURN only after delivered
         if (type === "RETURN") {
-            if (order.status !== ORDER_STATUS.DELIVERED) {
+            if (order.status !== ORDER_STATUS.DELIVERED)
                 return res.status(400).json({ success: false, msg: "Return allowed only after delivery" });
-            }
 
             await Order.findOneAndUpdate(
                 { orderId, phoneNumber: userPhone },
@@ -42,13 +48,13 @@ router.post("/", async (req, res) => {
             );
         }
 
+        // create complaint/return log
         const complaint = await Complaint.create({
             orderId,
             userPhone,
             type,
             title,
-            message,
-            createdAt: new Date()
+            message
         });
 
         res.json({ success: true, complaint });
