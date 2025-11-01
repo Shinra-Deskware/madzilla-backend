@@ -16,3 +16,4 @@ wwwroot/
 .idea/
 .vscode/chrome/
 package-lock.json
+.env
