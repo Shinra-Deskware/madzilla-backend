@@ -142,48 +142,38 @@ router.put("/sections/products/:id", async (req, res) => {
 });
 
 router.put("/orders/:orderId", async (req, res) => {
-    // Prevent accidental status override after return initiated
-    const returnFlowStatuses = [
-        ORDER_STATUS.RETURN_REQUESTED,
-        ORDER_STATUS.RETURN_ACCEPTED,
-        ORDER_STATUS.RETURN_RECEIVED,
-        ORDER_STATUS.RETURN_REJECTED,
-        ORDER_STATUS.RETURNED
-    ];
-
-    if (returnFlowStatuses.includes(order.status)) {
-        return res.status(400).json({
-            success: false,
-            message: "Order is in return process. Update via return actions only."
-        });
-    }
-
     try {
         const { paymentStatus, status } = req.body;
-
-        const steps = [
-            ORDER_STATUS.PENDING,
-            ORDER_STATUS.ORDER_PLACED,
-            ORDER_STATUS.ORDER_PACKED,
-            ORDER_STATUS.IN_TRANSIT,
-            ORDER_STATUS.OUT_FOR_DELIVERY,
-            ORDER_STATUS.DELIVERED
-        ];
 
         const order = await Order.findOne({ orderId: req.params.orderId });
         if (!order)
             return res.status(404).json({ success: false, message: "Order not found" });
-        // Cancel Order
-        // ✅ Admin Cancel Order
-        if (status === ORDER_STATUS.CANCELLED) {
 
+        // ✅ Prevent overriding during return flow
+        const returnFlowStatuses = [
+            ORDER_STATUS.RETURN_REQUESTED,
+            ORDER_STATUS.RETURN_ACCEPTED,
+            ORDER_STATUS.RETURN_RECEIVED,
+            ORDER_STATUS.RETURN_REJECTED,
+            ORDER_STATUS.RETURNED
+        ];
+
+        if (returnFlowStatuses.includes(order.status)) {
+            return res.status(400).json({
+                success: false,
+                message: "Order is in return process. Update via return actions only."
+            });
+        }
+
+        // ✅ Cancel Order
+        if (status === ORDER_STATUS.CANCELLED) {
             if (order.paymentStatus === PAYMENT_STATUS.PAID) {
                 order.paymentStatus = PAYMENT_STATUS.REFUND_REQUESTED;
             } else {
                 order.paymentStatus = PAYMENT_STATUS.CANCELLED;
             }
 
-            order.status = "CANCELLED";
+            order.status = ORDER_STATUS.CANCELLED;
             order.currentStep = -1;
 
             order.statusHistory.push({
@@ -197,24 +187,32 @@ router.put("/orders/:orderId", async (req, res) => {
             return res.json({ success: true, order });
         }
 
-        // 🧾 Append status change to history safely
+        // ✅ Delivery step flow
+        const steps = [
+            ORDER_STATUS.PENDING,
+            ORDER_STATUS.ORDER_PLACED,
+            ORDER_STATUS.ORDER_PACKED,
+            ORDER_STATUS.IN_TRANSIT,
+            ORDER_STATUS.OUT_FOR_DELIVERY,
+            ORDER_STATUS.DELIVERED
+        ];
+
         if (status && steps.includes(status) && order.status !== status) {
             const stepIndex = steps.indexOf(status);
             order.status = status;
             order.currentStep = stepIndex;
-            order.statusHistory = order.statusHistory || [];
             order.statusHistory.push({
                 step: stepIndex,
                 label: status,
                 date: new Date(),
             });
-            if (status === "Delivered") {
-                order.deliveredDate = new Date()
+
+            if (status === ORDER_STATUS.DELIVERED) {
+                order.deliveredDate = new Date();
             }
         }
 
-        // 💳 Update payment status if changed
-        // ✅ Safe Payment Status Control
+        // ✅ Payment transitions (legal only)
         if (paymentStatus && order.paymentStatus !== paymentStatus) {
 
             const validTransitions = {
@@ -234,25 +232,13 @@ router.put("/orders/:orderId", async (req, res) => {
             order.paymentStatus = paymentStatus;
         }
 
-        // ✅ Allow only specific editable fields
-        const editableFields = [
-            "deliveryMethod",
-            "trackingId",
-            "trackingUrl",
-            "shipping",
-            "total",
-            "notes",
-        ];
-
+        // ✅ Allow Editing Other fields
+        const editableFields = ["deliveryMethod", "trackingId", "trackingUrl", "shipping", "total", "notes"];
         for (const key of editableFields) {
-            if (req.body[key] !== undefined) {
-                order[key] = req.body[key];
-            }
+            if (req.body[key] !== undefined) order[key] = req.body[key];
         }
 
-        // 🕒 Always update timestamp
         order.updatedAt = new Date();
-
         await order.save();
 
         res.json({ success: true, order });
@@ -261,6 +247,7 @@ router.put("/orders/:orderId", async (req, res) => {
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
+
 // ✅ ADMIN — Mark item received (after user sends product back)
 router.put("/orders/:orderId/return-received", async (req, res) => {
     try {
