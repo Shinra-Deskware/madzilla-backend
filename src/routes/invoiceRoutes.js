@@ -5,7 +5,6 @@ const router = express.Router();
 
 // Download invoice by orderId
 router.get("/:orderId/download", async (req, res) => {
-    console.log("gggggggg")
     try {
         const { orderId } = req.params;
 

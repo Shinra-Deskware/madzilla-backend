@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-export async function sendHelloWorld(to, otp) {
+export async function sendWhtspOtp(to, otp) {
     let formatted = to
     if (!formatted.startsWith('+91')) {
         formatted = `+91${formatted}`

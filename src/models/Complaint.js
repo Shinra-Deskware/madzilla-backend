@@ -1,12 +1,11 @@
-// server/models/Complaint.js
 import mongoose from "mongoose";
 
 const ComplaintSchema = new mongoose.Schema(
     {
         orderId: { type: String, required: true },
-        userPhone: { type: String, required: true },
+        emailId: { type: String, required: true, lowercase: true },
+        userPhone: { type: String }, // ✅ added
 
-        // Type: complaint or return request
         type: {
             type: String,
             enum: ["COMPLAINT", "RETURN"],
@@ -17,7 +16,6 @@ const ComplaintSchema = new mongoose.Schema(
         message: String,
         images: { type: Array, default: [] },
 
-        // Complaint/Return status
         status: {
             type: String,
             enum: ["OPEN", "APPROVED", "REJECTED"],
@@ -26,12 +24,12 @@ const ComplaintSchema = new mongoose.Schema(
 
         adminNotes: String,
 
-        // Return timeline
         returnApprovedAt: Date,
         returnRejectedAt: Date,
         returnReceivedAt: Date
     },
     { timestamps: true }
 );
+
 
 export default mongoose.model("Complaint", ComplaintSchema);

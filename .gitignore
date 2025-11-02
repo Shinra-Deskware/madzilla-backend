@@ -17,3 +17,4 @@ wwwroot/
 .vscode/chrome/
 package-lock.json
 .env
+otp-cache.json

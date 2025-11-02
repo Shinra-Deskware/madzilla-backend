@@ -30,7 +30,7 @@ router.put("/:id/approve", async (req, res) => {
 
         complaint.status = "APPROVED";
         if (adminNotes) complaint.adminNotes = adminNotes;
-        complaint.approvedAt = new Date();
+        complaint.returnApprovedAt = new Date();
         await complaint.save();
 
         if (complaint.type === "RETURN") {
@@ -64,7 +64,7 @@ router.put("/:id/receive", async (req, res) => {
 
         complaint.status = "RECEIVED"; // TRACKING ONLY, admin UI uses order status
         if (adminNotes) complaint.adminNotes = adminNotes;
-        complaint.itemReceivedAt = new Date();
+        complaint.returnReceivedAt = new Date();
         await complaint.save();
 
         await Order.findOneAndUpdate(
@@ -95,7 +95,7 @@ router.put("/:id/reject", async (req, res) => {
 
         complaint.status = "REJECTED";
         if (adminNotes) complaint.adminNotes = adminNotes;
-        complaint.rejectedAt = new Date();
+        complaint.returnRejectedAt = new Date();
         await complaint.save();
 
         if (complaint.type === "RETURN") {

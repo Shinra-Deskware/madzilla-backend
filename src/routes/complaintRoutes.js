@@ -9,17 +9,22 @@ const router = express.Router();
 /** User creates complaint / return request */
 router.post("/", async (req, res) => {
     try {
-        const { orderId, userPhone, type, title, message } = req.body;
+        const { orderId, userPhone, emailId, type, title, message } = req.body;
 
-        if (!orderId || !userPhone || !type || !title || !message)
+        if (!orderId || !type || !title || !message)
             return res.status(400).json({ success: false, msg: "Missing fields" });
 
-        // ensure order exists & belongs to user
-        const order = await Order.findOne({ orderId, phoneNumber: userPhone });
+        // find order either by phone or email
+        const query = { orderId };
+        if (emailId) query.emailId = emailId;
+        else if (userPhone) query.phoneNumber = userPhone;
+        else return res.status(400).json({ success: false, msg: "emailId or userPhone required" });
+
+        const order = await Order.findOne(query);
         if (!order)
             return res.status(404).json({ success: false, msg: "Order not found" });
 
-        // ❗ Only block if RETURN in progress AND request is RETURN
+        // return flow guard
         if (
             type === "RETURN" &&
             [
@@ -33,25 +38,21 @@ router.post("/", async (req, res) => {
             return res.status(400).json({ success: false, msg: "Return already in process" });
         }
 
-        // ✅ RETURN only after delivered
         if (type === "RETURN") {
             if (order.status !== ORDER_STATUS.DELIVERED)
                 return res.status(400).json({ success: false, msg: "Return allowed only after delivery" });
 
-            await Order.findOneAndUpdate(
-                { orderId, phoneNumber: userPhone },
-                {
-                    status: ORDER_STATUS.RETURN_REQUESTED,
-                    updatedAt: new Date(),
-                    returnRequestedAt: new Date()
-                }
-            );
+            await Order.findOneAndUpdate(query, {
+                status: ORDER_STATUS.RETURN_REQUESTED,
+                updatedAt: new Date(),
+                returnRequestedAt: new Date()
+            });
         }
 
-        // create complaint/return log
         const complaint = await Complaint.create({
             orderId,
-            userPhone,
+            emailId: (emailId || order.emailId || "").toLowerCase(),
+            userPhone: userPhone || order.phoneNumber || null,
             type,
             title,
             message
@@ -63,5 +64,6 @@ router.post("/", async (req, res) => {
         res.status(500).json({ success: false, msg: "Server error" });
     }
 });
+
 
 export default router;

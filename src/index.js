@@ -42,7 +42,7 @@ app.use((req, res, next) => {
 
 app.use("/api/invoice", invoiceRoutes);
 app.use("/api/sections", sectionRoutes);
-app.use("/api/payment", paymentRoutes);
+app.use("/api", paymentRoutes);
 app.use("/api/auth", authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/otp', otpRoutes);
