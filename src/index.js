@@ -1,4 +1,4 @@
-// ✅ Load environment variables BEFORE anything else
+// ✅ Load env first
 import "../config/env.js";
 
 import express from "express";
@@ -22,65 +22,52 @@ import adminRoutes from "./routes/adminRoutes.js";
 import invoiceRoutes from "./routes/invoiceRoutes.js";
 import complaintRoutes from "./routes/complaintRoutes.js";
 import adminComplaints from "./routes/adminComplaints.js";
-import razorWebhook from "./routes/razorWebhook.js";
 import refundRetryJob from "./jobs/refundRetry.js";
 
-// ✅ Connect DB AFTER env loaded
+// ✅ Razorpay webhook handler
+import razorWebhook from "./routes/razorWebhook.js";
+
+// ✅ Connect DB
 connectDB();
 
 const app = express();
 
 /* -----------------------------------------------------
-   ⚠️ Razorpay Webhook MUST be before express.json()
-   AND must use express.raw() at mount time
+   ✅ Razorpay Webhook (before body parser!)
 ----------------------------------------------------- */
 app.post(
     "/razorpay/webhook",
-    express.raw({ type: "*/*" }), // ✅ forces raw body for signature
+    express.raw({ type: "*/*" }),
     razorWebhook
 );
 
 /* -----------------------------------------------------
-   🔒 Security & Core Middleware
+   ✅ Middleware
 ----------------------------------------------------- */
 app.use(helmet());
-app.use(express.json()); // ✅ Safe now (after webhook)
+app.use(express.json());
 app.use(cookieParser());
 
-// 🧱 Rate limit: 100 req / 15 min
+// ✅ Rate limit
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    limit: 100,
-    message: "Too many requests, please try again later.",
+    limit: 200,
 });
 app.use(limiter);
 
-/* -----------------------------------------------------
-   🌐 CORS
------------------------------------------------------ */
+// ✅ CORS
 const allowedOrigins = process.env.CLIENT_URL
     ? process.env.CLIENT_URL.split(",")
-    : ["http://localhost:5173", "http://127.0.0.1:5173"];
+    : ["http://localhost:5173"];
 
 app.use(
     cors({
-        origin: (origin, callback) => {
-            if (!origin || allowedOrigins.includes(origin)) callback(null, true);
-            else callback(new Error("CORS not allowed"));
-        },
+        origin: allowedOrigins,
         credentials: true,
     })
 );
 
-// ✅ Allow credentials
-app.use((req, res, next) => {
-    res.header("Access-Control-Allow-Credentials", "true");
-    next();
-});
-
-/* -----------------------------------------------------
-   🪵 Logging (Morgan)
------------------------------------------------------ */
+// ✅ Logging
 const logStream = fs.createWriteStream(
     path.join(process.cwd(), "server.log"),
     { flags: "a" }
@@ -89,7 +76,7 @@ app.use(morgan("combined", { stream: logStream }));
 app.use(morgan("dev"));
 
 /* -----------------------------------------------------
-   🛠 Routes
+   ✅ Routes
 ----------------------------------------------------- */
 app.use("/api/invoice", invoiceRoutes);
 app.use("/api/sections", sectionRoutes);
@@ -102,7 +89,7 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/admin/complaints", adminComplaints);
 
 /* -----------------------------------------------------
-   ⚠️ Global Error Handler
+   ✅ Global Error
 ----------------------------------------------------- */
 app.use((err, req, res, next) => {
     console.error("❌ Global Error:", err.message);
@@ -111,15 +98,14 @@ app.use((err, req, res, next) => {
         `[${new Date().toISOString()}] ${req.method} ${req.url} :: ${err.stack}\n`
     );
 
-    const status = err.status || 500;
-    res.status(status).json({
+    res.status(err.status || 500).json({
         success: false,
-        message: err.message || "Internal server error",
+        message: err.message || "Server error",
     });
 });
 
 /* -----------------------------------------------------
-   🚀 Start Server
+   ✅ Start Server
 ----------------------------------------------------- */
 const PORT = process.env.PORT || 5000;
 
