@@ -71,9 +71,10 @@ router.put("/:id/receive", async (req, res) => {
         if (complaint.type !== "RETURN")
             return res.status(400).json({ success: false, message: "Not a return complaint" });
 
-        complaint.status = "RECEIVED"; // UI tracking only
-        if (adminNotes) complaint.adminNotes = adminNotes;
+        // ✅ Valid enum update
+        complaint.status = "APPROVED"; // stays approved after approval
         complaint.returnReceivedAt = new Date();
+        if (adminNotes) complaint.adminNotes = adminNotes;
         await complaint.save();
 
         await Order.findOneAndUpdate(
@@ -81,6 +82,7 @@ router.put("/:id/receive", async (req, res) => {
             {
                 status: ORDER_STATUS.RETURN_RECEIVED,
                 paymentStatus: PAYMENT_STATUS.REFUND_INITIATED,
+                refundContext: "RETURN",
                 updatedAt: new Date(),
                 returnReceivedDate: new Date(),
             }
@@ -92,6 +94,7 @@ router.put("/:id/receive", async (req, res) => {
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
+
 
 /* -----------------------------------------------------
    ❌ Reject complaint / return

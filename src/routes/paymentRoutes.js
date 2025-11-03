@@ -40,17 +40,16 @@ const razorpay = new Razorpay({
 ----------------------------------------------------- */
 router.post("/neworder", verifySession, async (req, res) => {
     try {
-        const { items, shipping = 0, address = {} } = req.body || {};
+        const { items, shipping = 0, address = {}, retryOrderId } = req.body || {};
         if (!Array.isArray(items) || items.length === 0)
             return res.status(400).json({ success: false, message: "No items" });
 
         const user = await User.findById(req.userId);
         if (!user) return res.status(404).json({ success: false, message: "User not found" });
-
         if (!user.emailId && !user.phoneNumber)
             return res.status(400).json({ success: false, message: "User missing identifier" });
 
-        // verify total
+        // 1) Recalculate total from DB (never trust client)
         let verifiedTotal = 0;
         for (const item of items) {
             let p = null;
@@ -60,14 +59,77 @@ router.post("/neworder", verifySession, async (req, res) => {
                 p = await Product.findOne({ key: item.key }).select("price");
             }
             if (!p) return res.status(400).json({ success: false, message: "Invalid product" });
-            const qty = item.qty ?? item.count ?? 1;
-            verifiedTotal += p.price * qty;
+            const qty = Number(item.qty ?? item.count ?? 1);
+            verifiedTotal += Number(p.price) * qty;
         }
-
-        const grand = verifiedTotal + shipping;
+        const grand = verifiedTotal + Number(shipping || 0);
         const amountPaise = Math.round(grand * 100);
         const receipt = `rcpt_${Date.now()}`;
 
+        // 2) If retrying an existing order (recommended flow)
+        if (retryOrderId) {
+            const existing = await Order.findOne({
+                orderId: retryOrderId,
+                $or: [{ emailId: user.emailId }, { phoneNumber: user.phoneNumber }],
+            });
+
+            if (!existing)
+                return res.status(404).json({ success: false, message: "Order not found for retry" });
+
+            // Block retry on paid / terminal states
+            const terminalStatuses = new Set([
+                PAYMENT_STATUS.PAID,
+                PAYMENT_STATUS.REFUND_INITIATED,
+                PAYMENT_STATUS.REFUND_DONE,
+            ]);
+            if (terminalStatuses.has(existing.paymentStatus) || existing.status === ORDER_STATUS.CANCELLED) {
+                return res.status(400).json({ success: false, message: "Order not eligible for retry" });
+            }
+
+            // Create a fresh Razorpay order every retry
+            const rzOrder = await razorpay.orders.create({
+                amount: amountPaise,
+                currency: "INR",
+                receipt,
+            });
+
+            // Update existing order with refreshed payment refs & current cart snapshot
+            existing.items = items;
+            existing.address = address;
+            existing.total = verifiedTotal;
+            existing.shipping = Number(shipping || 0);
+            existing.paymentMethod = "Razorpay";
+            existing.razorpay_order_id = rzOrder.id;
+            existing.razorpay_receipt = receipt;
+
+            // Reset payment flags for clean retry
+            existing.paymentStatus = PAYMENT_STATUS.PENDING;
+            existing.status = ORDER_STATUS.PENDING;
+            existing.currentStep = 0;
+            existing.failedPaymentId = undefined;
+            existing.razorpay_payment_id = undefined;
+            existing.razorpay_signature = undefined;
+
+            // Ensure history has at least PENDING once
+            existing.statusHistory = existing.statusHistory || [];
+            if (!existing.statusHistory.find(h => h.label === ORDER_STATUS.PENDING)) {
+                existing.statusHistory.push({ step: 0, label: ORDER_STATUS.PENDING, date: new Date() });
+            }
+
+            await existing.save();
+            await sendOrderStatusEmail(existing, "PENDING");
+
+            return res.json({
+                success: true,
+                key: process.env.RAZORPAY_KEY_ID,
+                razorpay_order_id: rzOrder.id,
+                amount: amountPaise,
+                currency: "INR",
+                orderId: existing.orderId,
+            });
+        }
+
+        // 3) Fresh order (original flow)
         const rzOrder = await razorpay.orders.create({
             amount: amountPaise,
             currency: "INR",
@@ -75,7 +137,6 @@ router.post("/neworder", verifySession, async (req, res) => {
         });
 
         const orderId = `ORD-${uuidv4().split("-")[0].toUpperCase()}`;
-
         const order = await Order.create({
             orderId,
             emailId: user.emailId,
@@ -83,7 +144,7 @@ router.post("/neworder", verifySession, async (req, res) => {
             items,
             address,
             total: verifiedTotal,
-            shipping,
+            shipping: Number(shipping || 0),
             paymentMethod: "Razorpay",
             razorpay_order_id: rzOrder.id,
             razorpay_receipt: receipt,
@@ -93,7 +154,7 @@ router.post("/neworder", verifySession, async (req, res) => {
             statusHistory: [{ step: 0, label: ORDER_STATUS.PENDING, date: new Date() }],
         });
 
-        // update saved address
+        // Save/attach to user
         await User.findByIdAndUpdate(req.userId, {
             $set: {
                 "address.fullName": address.fullName,
@@ -103,14 +164,13 @@ router.post("/neworder", verifySession, async (req, res) => {
                 "address.city": address.city,
                 "address.pinCode": address.pinCode,
                 "address.addr1": address.addr1,
-            }
+            },
+            $addToSet: { orders: orderId },
         });
-
-        await User.findByIdAndUpdate(req.userId, { $addToSet: { orders: orderId } });
 
         await sendOrderStatusEmail(order, "PENDING");
 
-        res.json({
+        return res.json({
             success: true,
             key: process.env.RAZORPAY_KEY_ID,
             razorpay_order_id: rzOrder.id,
@@ -119,6 +179,7 @@ router.post("/neworder", verifySession, async (req, res) => {
             orderId,
         });
     } catch (err) {
+        console.error("neworder error:", err);
         return res.status(500).json({ success: false, message: "Failed" });
     }
 });

@@ -2,7 +2,7 @@
 const BRAND = {
     name: "Shinra Deskware",
     primary: "#00B86E",
-    darkBg: "#0F1115",
+    darkBg: "#ffffffff",
     cardBg: "#151923",
     text: "#E8EAF0",
     sub: "#9AA3B2",
