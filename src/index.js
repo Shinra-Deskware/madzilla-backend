@@ -24,25 +24,30 @@ import complaintRoutes from "./routes/complaintRoutes.js";
 import adminComplaints from "./routes/adminComplaints.js";
 import razorWebhook from "./routes/razorWebhook.js";
 import refundRetryJob from "./jobs/refundRetry.js";
-// Paths
 
 // ✅ Connect DB AFTER env loaded
 connectDB();
 
 const app = express();
-app.use(
-    "/razorpay",
-    razorWebhook // this already uses express.raw() inside the file
+
+/* -----------------------------------------------------
+   ⚠️ Razorpay Webhook MUST be before express.json()
+   AND must use express.raw() at mount time
+----------------------------------------------------- */
+app.post(
+    "/razorpay/webhook",
+    express.raw({ type: "*/*" }), // ✅ forces raw body for signature
+    razorWebhook
 );
 
 /* -----------------------------------------------------
    🔒 Security & Core Middleware
 ----------------------------------------------------- */
 app.use(helmet());
-app.use(express.json());
+app.use(express.json()); // ✅ Safe now (after webhook)
 app.use(cookieParser());
 
-// 🧱 Rate limit: 100 req / 15 min per IP
+// 🧱 Rate limit: 100 req / 15 min
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     limit: 100,
@@ -80,8 +85,8 @@ const logStream = fs.createWriteStream(
     path.join(process.cwd(), "server.log"),
     { flags: "a" }
 );
-app.use(morgan("combined", { stream: logStream })); // file
-app.use(morgan("dev")); // console
+app.use(morgan("combined", { stream: logStream }));
+app.use(morgan("dev"));
 
 /* -----------------------------------------------------
    🛠 Routes
@@ -117,8 +122,10 @@ app.use((err, req, res, next) => {
    🚀 Start Server
 ----------------------------------------------------- */
 const PORT = process.env.PORT || 5000;
+
 // Retry refunds every 10 minutes
 cron.schedule("*/10 * * * *", refundRetryJob);
+
 app.listen(PORT, () =>
     console.log(`🚀 Server running in ${process.env.NODE_ENV} on port ${PORT}`)
 );
