@@ -1,0 +1,10 @@
+{
+    "watch": [
+        "src"
+    ],
+    "ignore": [
+        "otp-cache.json",
+        "*.log"
+    ],
+    "ext": "js,json"
+}

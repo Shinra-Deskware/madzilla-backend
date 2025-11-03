@@ -1,4 +1,3 @@
-// server/routes/complaintRoutes.js
 import express from "express";
 import Complaint from "../models/Complaint.js";
 import Order from "../models/Order.js";
@@ -6,25 +5,35 @@ import { ORDER_STATUS } from "../constants/constants.js";
 
 const router = express.Router();
 
-/** User creates complaint / return request */
+/**
+ * 🧾 User creates complaint / return request
+ * Ensures: either emailId or userPhone must be present
+ */
 router.post("/", async (req, res) => {
     try {
-        const { orderId, userPhone, emailId, type, title, message } = req.body;
+        const { orderId, userPhone, emailId, type, title, message } = req.body || {};
 
-        if (!orderId || !type || !title || !message)
+        // ✅ Basic field validation
+        if (!orderId || !type || !title || !message) {
             return res.status(400).json({ success: false, msg: "Missing fields" });
+        }
 
-        // find order either by phone or email
+        // ✅ Must have at least one identifier
+        if (!emailId && !userPhone) {
+            return res.status(400).json({ success: false, msg: "Either emailId or userPhone required" });
+        }
+
+        // 🧩 Find order by whichever identifier exists
         const query = { orderId };
-        if (emailId) query.emailId = emailId;
-        else if (userPhone) query.phoneNumber = userPhone;
-        else return res.status(400).json({ success: false, msg: "emailId or userPhone required" });
+        if (emailId) query.emailId = emailId.toLowerCase();
+        else query.phoneNumber = userPhone;
 
         const order = await Order.findOne(query);
-        if (!order)
+        if (!order) {
             return res.status(404).json({ success: false, msg: "Order not found" });
+        }
 
-        // return flow guard
+        // 🚫 Guard: prevent duplicate return flow
         if (
             type === "RETURN" &&
             [
@@ -38,9 +47,11 @@ router.post("/", async (req, res) => {
             return res.status(400).json({ success: false, msg: "Return already in process" });
         }
 
+        // ✅ Mark order as RETURN_REQUESTED if eligible
         if (type === "RETURN") {
-            if (order.status !== ORDER_STATUS.DELIVERED)
+            if (order.status !== ORDER_STATUS.DELIVERED) {
                 return res.status(400).json({ success: false, msg: "Return allowed only after delivery" });
+            }
 
             await Order.findOneAndUpdate(query, {
                 status: ORDER_STATUS.RETURN_REQUESTED,
@@ -49,6 +60,7 @@ router.post("/", async (req, res) => {
             });
         }
 
+        // 🆕 Create complaint entry
         const complaint = await Complaint.create({
             orderId,
             emailId: (emailId || order.emailId || "").toLowerCase(),
@@ -64,6 +76,5 @@ router.post("/", async (req, res) => {
         res.status(500).json({ success: false, msg: "Server error" });
     }
 });
-
 
 export default router;

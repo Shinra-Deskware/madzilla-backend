@@ -1,69 +1,71 @@
-import express from 'express'
-import User from '../models/User.js'
+import express from "express";
 import jwt from "jsonwebtoken";
+import User from "../models/User.js";
 import Order from "../models/Order.js";
 import { v4 as uuidv4 } from "uuid";
 import { ORDER_STATUS, PAYMENT_STATUS } from "../constants/constants.js";
-
-
-const router = express.Router()
-
-// 👥 Get all users (for testing)
-router.get('/', async (req, res) => {
-    const users = await User.find()
-    res.json(users)
-})
-
-// 👤 Get logged-in user
-router.get("/me", async (req, res) => {
-    const token = req.cookies.session;
-    if (!token) return res.json({ user: null });
-
-    try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        const user = await User.findById(decoded.uid);
-        res.json({ user });
-    } catch (err) {
-        console.error("JWT verify error:", err.message);
-        res.json({ user: null });
-    }
+import Razorpay from "razorpay";
+const router = express.Router();
+const razorpay = new Razorpay({
+    key_id: process.env.RAZORPAY_KEY_ID,
+    key_secret: process.env.RAZORPAY_KEY_SECRET
 });
-
-// ✏️ Update logged-in user details
-router.patch("/me", async (req, res) => {
-    const token = req.cookies.session;
-    if (!token) return res.status(401).json({ error: "Unauthorized" });
-
+/* -----------------------------------------------------
+   🔐 Middleware: Verify user session
+----------------------------------------------------- */
+function verifySession(req, res, next) {
     try {
+        const token = req.cookies?.session;
+        if (!token) return res.status(401).json({ success: false, message: "Unauthorized" });
+
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        const updates = req.body;
+        req.userId = decoded.uid;
+        next();
+    } catch (err) {
+        console.error("Session verify error:", err.message);
+        res.status(401).json({ success: false, message: "Invalid or expired session" });
+    }
+}
 
-        const user = await User.findByIdAndUpdate(
-            decoded.uid,
-            { $set: updates },
-            { new: true }
-        );
-
+/* -----------------------------------------------------
+   👤 Get logged-in user
+----------------------------------------------------- */
+router.get("/me", verifySession, async (req, res) => {
+    try {
+        const user = await User.findById(req.userId);
+        if (!user) return res.status(404).json({ success: false, message: "User not found" });
         res.json({ success: true, user });
     } catch (err) {
-        console.error("Update error:", err);
-        res.status(400).json({ error: "Failed to update user" });
+        console.error("Fetch user error:", err);
+        res.status(500).json({ success: false, message: "Server error" });
     }
 });
 
-// 🧩 1️⃣ Save full cart (local → DB) safely — replaces cart fully
-router.post("/:userId/cart/save", async (req, res) => {
+/* -----------------------------------------------------
+   ✏️ Update user details
+----------------------------------------------------- */
+router.patch("/me", verifySession, async (req, res) => {
+    try {
+        const updates = req.body || {};
+        const user = await User.findByIdAndUpdate(req.userId, { $set: updates }, { new: true });
+        if (!user) return res.status(404).json({ success: false, message: "User not found" });
+        res.json({ success: true, user });
+    } catch (err) {
+        console.error("User update error:", err);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+});
+
+/* -----------------------------------------------------
+   🛒 Save full cart (local → DB)
+----------------------------------------------------- */
+router.post("/cart/save", verifySession, async (req, res) => {
     try {
         const { cart } = req.body;
-        if (!Array.isArray(cart)) return res.status(400).json({ message: "Invalid cart format" });
+        if (!Array.isArray(cart)) return res.status(400).json({ success: false, message: "Invalid cart format" });
 
-        const updatedUser = await User.findByIdAndUpdate(
-            req.params.userId,
-            { $set: { cart } },
-            { new: true } // ✅ avoids VersionError
-        );
-
-        if (!updatedUser) return res.status(404).json({ message: "User not found" });
+        const updatedUser = await User.findByIdAndUpdate(req.userId, { $set: { cart } }, { new: true });
+        if (!updatedUser) return res.status(404).json({ success: false, message: "User not found" });
 
         res.json({ success: true, cart: updatedUser.cart });
     } catch (err) {
@@ -72,37 +74,36 @@ router.post("/:userId/cart/save", async (req, res) => {
     }
 });
 
-// 🛒 2️⃣ Get user cart
-router.get("/:userId/cart", async (req, res) => {
+/* -----------------------------------------------------
+   🛍️ Get user cart
+----------------------------------------------------- */
+router.get("/cart", verifySession, async (req, res) => {
     try {
-        const user = await User.findById(req.params.userId);
-        if (!user) return res.status(404).json({ message: "User not found" });
-
-        res.json(user.cart || []);
+        const user = await User.findById(req.userId);
+        if (!user) return res.status(404).json({ success: false, message: "User not found" });
+        res.json({ success: true, cart: user.cart || [] });
     } catch (err) {
         console.error("Fetch cart error:", err);
-        res.status(500).json({ message: "Server error" });
+        res.status(500).json({ success: false, message: "Server error" });
     }
 });
 
-// 🔁 3️⃣ Merge guest → DB (login sync)
-router.post("/:userId/cart/sync", async (req, res) => {
+/* -----------------------------------------------------
+   🔁 Merge guest → DB cart
+----------------------------------------------------- */
+router.post("/cart/sync", verifySession, async (req, res) => {
     try {
         const { items } = req.body;
-        if (!Array.isArray(items)) return res.status(400).json({ message: "Invalid cart data" });
+        if (!Array.isArray(items)) return res.status(400).json({ success: false, message: "Invalid cart data" });
 
-        const user = await User.findById(req.params.userId);
-        if (!user) return res.status(404).json({ message: "User not found" });
+        const user = await User.findById(req.userId);
+        if (!user) return res.status(404).json({ success: false, message: "User not found" });
 
-        const existingCart = user.cart || [];
         const mergedMap = new Map();
-
-        // Merge both carts
-        for (const item of existingCart) mergedMap.set(item.key, item);
-        for (const item of items) {
-            if (mergedMap.has(item.key)) {
-                mergedMap.get(item.key).count += item.count;
-            } else mergedMap.set(item.key, item);
+        for (const i of user.cart || []) mergedMap.set(i.key, { ...i });
+        for (const i of items) {
+            if (mergedMap.has(i.key)) mergedMap.get(i.key).count += i.count;
+            else mergedMap.set(i.key, i);
         }
 
         user.cart = Array.from(mergedMap.values());
@@ -115,136 +116,60 @@ router.post("/:userId/cart/sync", async (req, res) => {
     }
 });
 
-// ✅ Create new order (save in Orders collection + link to user)
-router.post("/:userId/orders", async (req, res) => {
+/* -----------------------------------------------------
+   📦 Create new order
+----------------------------------------------------- */
+router.post("/orders", verifySession, async (req, res) => {
     try {
         const { order } = req.body;
-        if (!order) return res.status(400).json({ message: "Order data required" });
+        if (!order) return res.status(400).json({ success: false, message: "Order data required" });
 
-        const user = await User.findById(req.params.userId);
-        if (!user) return res.status(404).json({ message: "User not found" });
+        const user = await User.findById(req.userId);
+        if (!user) return res.status(404).json({ success: false, message: "User not found" });
 
-        // 🆔 Generate readable orderId
         const orderId = `ORD-${uuidv4().split("-")[0].toUpperCase()}`;
 
-        // 🏗️ Create order in Orders collection
         const newOrder = await Order.create({
-            phoneNumber: user.phoneNumber,
             orderId,
-            ...order,
+            emailId: user.emailId,
+            phoneNumber: user.phoneNumber,
+            items: order.items,
+            address: order.address,
+            total: order.total,
+            shipping: order.shipping,
+            paymentMethod: order.paymentMethod || "Razorpay",
+            paymentStatus: PAYMENT_STATUS.PENDING,
             status: ORDER_STATUS.PENDING,
             currentStep: 0,
-            paymentStatus: PAYMENT_STATUS.PENDING,
             statusHistory: [{ step: 0, label: ORDER_STATUS.PENDING, date: new Date() }],
         });
 
-        // 🔗 Link orderId to user
-        user.orders = user.orders || [];
         user.orders.push(orderId);
-        user.cart = []; // empty cart after confirm
+        user.cart = [];
         await user.save();
 
         res.json({ success: true, order: newOrder });
     } catch (err) {
-        console.error("Order save error:", err);
+        console.error("Order create error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
 
-// 📦 Fetch all orders by email
-router.get("/email/:email/orders", async (req, res) => {
+/* -----------------------------------------------------
+   📜 Get all my orders
+----------------------------------------------------- */
+router.get("/orders", verifySession, async (req, res) => {
     try {
-        const { email } = req.params;
-        const orders = await Order.find({ emailId: email }).sort({ createdAt: -1 });
+        const user = await User.findById(req.userId);
+        if (!user) return res.status(404).json({ success: false, message: "User not found" });
 
-        res.json({ success: true, orders: orders || [] });
-    } catch (err) {
-        console.error("Fetch orders (email) error:", err);
-        res.status(500).json({ success: false, message: "Server error" });
-    }
-});
-
-
-// 📦 Fetch all orders by phoneNumber
-router.get("/phone/:phone/orders", async (req, res) => {
-    try {
-        const { phone } = req.params;
-        const orders = await Order.find({ phoneNumber: phone }).sort({ createdAt: -1 });
-
-        if (!orders.length) return res.json({ success: true, orders: [] });
+        const orders = await Order.find({
+            $or: [{ emailId: user.emailId }, { phoneNumber: user.phoneNumber }],
+        }).sort({ createdAt: -1 });
 
         res.json({ success: true, orders });
     } catch (err) {
         console.error("Fetch orders error:", err);
-        res.status(500).json({ success: false, message: "Server error" });
-    }
-});
-
-// 🚫 Cancel order + restore items to cart (EMAIL)
-router.post("/email/:email/orders/:orderId/cancel", async (req, res) => {
-    try {
-        const { email, orderId } = req.params;
-
-        const user = await User.findOne({ emailId: email });
-        if (!user) return res.status(404).json({ success: false, message: "User not found" });
-
-        const order = await Order.findOne({ emailId: email, orderId });
-        if (!order) return res.status(404).json({ success: false, message: "Order not found" });
-
-        if (order.currentStep >= 3)
-            return res.status(400).json({ success: false, message: "Cannot cancel this order now" });
-
-        // ✅ Cancel Order Logic
-        if (order.paymentStatus === PAYMENT_STATUS.PAID) {
-            order.paymentStatus = PAYMENT_STATUS.REFUND_REQUESTED;
-        } else {
-            order.paymentStatus = PAYMENT_STATUS.CANCELLED;
-        }
-
-        order.status = ORDER_STATUS.CANCELLED;
-        order.currentStep = -1;
-        order.statusHistory.push({
-            step: -1,
-            label: ORDER_STATUS.CANCELLED,
-            date: new Date()
-        });
-        order.cancelledDate = new Date();
-        order.updatedAt = new Date();
-        await order.save();
-
-        // 🛒 Restore cart
-        // 🛒 Restore cart (qty → count fix)
-        const merged = new Map();
-
-        // existing cart
-        for (const c of user.cart || []) {
-            merged.set(c.key, { ...c });
-        }
-
-        // merge order items back
-        for (const o of order.items || []) {
-            const qty = o.qty ?? o.count ?? 1;
-            if (merged.has(o.key)) {
-                merged.get(o.key).count = (merged.get(o.key).count || 0) + qty;
-            } else {
-                merged.set(o.key, {
-                    key: o.key,
-                    productId: o.productId,
-                    title: o.title,
-                    price: o.price,
-                    count: qty,
-                });
-            }
-        }
-
-        user.cart = Array.from(merged.values());
-        await user.save();
-
-
-        res.json({ success: true, order, cart: user.cart });
-
-    } catch (err) {
-        console.error("Cancel order error:", err);
         res.status(500).json({ success: false, message: "Server error" });
     }
 });

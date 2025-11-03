@@ -1,32 +1,35 @@
 import fs from "fs";
 import path from "path";
 
-const otpFile = path.join(process.cwd(), "otp-cache.json");
+const otpFile = path.resolve(process.cwd(), "otp-cache.json");
 
-// Load cache from disk (survive restart)
 let store = new Map();
+
+// 🧩 Load from disk (survives server restart)
 try {
     if (fs.existsSync(otpFile)) {
         const data = JSON.parse(fs.readFileSync(otpFile, "utf8"));
         store = new Map(data);
     }
 } catch (err) {
-    console.error("OTP cache load error", err);
+    console.error("⚠️ OTP cache load error:", err);
 }
 
-// Save to disk
+// 💾 Persist to disk
 function persist() {
     try {
         fs.writeFileSync(otpFile, JSON.stringify([...store]), "utf8");
     } catch (err) {
-        console.error("OTP cache write error", err);
+        console.error("⚠️ OTP cache write error:", err);
     }
 }
 
-// ✅ Store
+/* -----------------------------------------------------
+   ✅ Create OTP entry
+----------------------------------------------------- */
 export function createOtp({ requestId, identifier, otp, ttlSec = 300 }) {
     store.set(requestId, {
-        identifier,
+        identifier: String(identifier).trim(),
         otp: String(otp).trim(),
         expiresAt: Date.now() + ttlSec * 1000,
         attempts: 0,
@@ -35,31 +38,32 @@ export function createOtp({ requestId, identifier, otp, ttlSec = 300 }) {
     persist();
 }
 
-// ✅ Verify
+/* -----------------------------------------------------
+   ✅ Verify OTP
+----------------------------------------------------- */
 export function verifyOtp({ requestId, otp }) {
-    const r = store.get(requestId);
-    if (!r) return { ok: false, reason: "not_found" };
+    const entry = store.get(requestId);
+    if (!entry) return { ok: false, reason: "not_found" };
 
-    if (Date.now() > r.expiresAt) {
+    if (Date.now() > entry.expiresAt) {
         store.delete(requestId);
         persist();
         return { ok: false, reason: "expired" };
     }
 
-    if (r.attempts >= r.maxAttempts) {
+    if (entry.attempts >= entry.maxAttempts) {
         store.delete(requestId);
         persist();
         return { ok: false, reason: "locked" };
     }
 
-    r.attempts++;
-
-    if (String(otp).trim() !== r.otp) {
+    entry.attempts++;
+    if (String(otp).trim() !== entry.otp) {
         persist();
-        return { ok: false, reason: "mismatch", left: r.maxAttempts - r.attempts };
+        return { ok: false, reason: "mismatch", left: entry.maxAttempts - entry.attempts };
     }
 
-    const identifier = r.identifier;
+    const identifier = entry.identifier;
     store.delete(requestId);
     persist();
     return { ok: true, identifier };

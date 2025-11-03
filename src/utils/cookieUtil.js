@@ -1,8 +1,11 @@
-export function setSessionCookie(res, valueObj) {
-    const cookieVal = Buffer.from(JSON.stringify(valueObj)).toString('base64url')
-    const isProd = process.env.NODE_ENV === 'production'
-    res.cookie('session', cookieVal, {
-        httpOnly: true, secure: isProd, sameSite: 'lax', path: '/',
-        maxAge: 1000 * 60 * 60 * 24 * 7
-    })
+export function setSessionCookie(res, jwtToken) {
+    const isProd = process.env.NODE_ENV === "production";
+
+    res.cookie("session", jwtToken, {
+        httpOnly: true,
+        secure: isProd,
+        sameSite: isProd ? "none" : "lax",
+        path: "/",
+        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
 }

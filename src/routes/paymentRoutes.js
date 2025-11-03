@@ -1,252 +1,262 @@
 import express from "express";
 import Razorpay from "razorpay";
 import crypto from "crypto";
+import jwt from "jsonwebtoken";
 import Order from "../models/Order.js";
 import User from "../models/User.js";
+import Product from "../models/Product.js";
 import { v4 as uuidv4 } from "uuid";
 import { ORDER_STATUS, PAYMENT_STATUS } from "../constants/constants.js";
-import Product from "../models/Product.js";
+import { sendOrderStatusEmail } from "../utils/sendOrderStatusEmail.js";
+
 const router = express.Router();
 
+/* -----------------------------------------------------
+   🧩 Verify session
+----------------------------------------------------- */
+function verifySession(req, res, next) {
+    try {
+        const token = req.cookies?.session;
+        if (!token) return res.status(401).json({ success: false, message: "Unauthorized" });
+
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        req.userId = decoded.uid;
+        next();
+    } catch {
+        return res.status(401).json({ success: false, message: "Invalid or expired session" });
+    }
+}
+
+/* -----------------------------------------------------
+   💳 Razorpay instance
+----------------------------------------------------- */
 const razorpay = new Razorpay({
     key_id: process.env.RAZORPAY_KEY_ID,
     key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
 
-// 🪙 Create Razorpay Order + Pending Order in DB
-router.post("/payment/order", async (req, res) => {
+/* -----------------------------------------------------
+   🪙 Create Razorpay Order + Pending DB Order
+----------------------------------------------------- */
+router.post("/neworder", verifySession, async (req, res) => {
     try {
-        const { emailId, items, total, shipping, address = {}, orderId } = req.body || {};
-        // ✅ Re-calculate total on server to block tampering
+        const { items, shipping = 0, address = {} } = req.body || {};
+        if (!Array.isArray(items) || items.length === 0)
+            return res.status(400).json({ success: false, message: "No items" });
+
+        const user = await User.findById(req.userId);
+        if (!user) return res.status(404).json({ success: false, message: "User not found" });
+
+        if (!user.emailId && !user.phoneNumber)
+            return res.status(400).json({ success: false, message: "User missing identifier" });
+
+        // verify total
         let verifiedTotal = 0;
-
         for (const item of items) {
-            const p = await Product.findById(item.productId).select("price");
+            let p = null;
+            if (item.productId && /^[a-f\d]{24}$/i.test(item.productId)) {
+                p = await Product.findById(item.productId).select("price");
+            } else if (item.key) {
+                p = await Product.findOne({ key: item.key }).select("price");
+            }
             if (!p) return res.status(400).json({ success: false, message: "Invalid product" });
-
             const qty = item.qty ?? item.count ?? 1;
             verifiedTotal += p.price * qty;
         }
 
-        // ✅ Replace trust client price
-        const computedTotal = verifiedTotal;
-        const computedGrand = computedTotal + shipping;
-
-        // ❗ If client sent wrong total → block or override (your choice)
-        if (Number(total) !== computedTotal) {
-            console.warn("⚠️ Price tamper detected:", { sent: total, real: computedTotal });
-            // Option A: Hard block
-            // return res.status(400).json({ success: false, message: "Price mismatch" });
-
-            // ✅ Option B: silently enforce real price
-        }
-
-        // ... (your validations unchanged)
-
-        const user = await User.findOne({ emailId });
-        if (!user) return res.status(404).json({ success: false, message: "User not found" });
-        // ✅ If orderId exists & not paid, reuse Razorpay order (prevents duplicates)
-        if (orderId) {
-            const existing = await Order.findOne({ orderId, emailId });
-
-            if (existing && existing.paymentStatus !== "PAID" && existing.razorpay_order_id) {
-                return res.json({
-                    success: true,
-                    key: process.env.RAZORPAY_KEY_ID,
-                    razorpay_order_id: existing.razorpay_order_id,
-                    amount: Math.round((existing.total + existing.shipping) * 100),
-                    currency: "INR",
-                    orderId: existing.orderId,
-                    reused: true
-                });
-            }
-        }
-
-        // 🔎 Try fetching existing order first
-        let orderDoc = orderId ? await Order.findOne({ orderId, emailId }) : null;
-
-        // ✅ If already paid, do NOT create a new Razorpay order
-        if (orderDoc && orderDoc.paymentStatus === PAYMENT_STATUS.PAID) {
-            return res.json({
-                success: true,
-                key: process.env.RAZORPAY_KEY_ID,
-                razorpay_order_id: orderDoc.razorpay_order_id,
-                amount: Math.round((total + shipping) * 100),
-                currency: "INR",
-                orderId: orderDoc.orderId
-            });
-        }
-
-        // 🧾 Create Razorpay order only now (needed for new / pending)
-        const amountPaise = Math.round(computedGrand * 100); // ✅ server-verified amount
+        const grand = verifiedTotal + shipping;
+        const amountPaise = Math.round(grand * 100);
         const receipt = `rcpt_${Date.now()}`;
+
         const rzOrder = await razorpay.orders.create({
             amount: amountPaise,
             currency: "INR",
             receipt,
         });
 
-        if (orderDoc) {
-            // ♻️ Update existing pending order
-            orderDoc.items = items;
-            orderDoc.total = total;
-            orderDoc.shipping = shipping;
-            orderDoc.address = address;                   // ✅ keep address in order
-            orderDoc.razorpay_order_id = rzOrder.id;
-            orderDoc.razorpay_receipt = receipt;
-            orderDoc.paymentStatus = PAYMENT_STATUS.PENDING;
-            orderDoc.status = ORDER_STATUS.PENDING;
-            orderDoc.currentStep = 0;
+        const orderId = `ORD-${uuidv4().split("-")[0].toUpperCase()}`;
 
-            // avoid duplicate PENDING entries
-            const last = orderDoc.statusHistory?.[orderDoc.statusHistory.length - 1];
-            if (!last || last.label !== ORDER_STATUS.PENDING) {
-                orderDoc.statusHistory.push({ step: 0, label: ORDER_STATUS.PENDING, date: new Date() });
+        const order = await Order.create({
+            orderId,
+            emailId: user.emailId,
+            phoneNumber: user.phoneNumber,
+            items,
+            address,
+            total: verifiedTotal,
+            shipping,
+            paymentMethod: "Razorpay",
+            razorpay_order_id: rzOrder.id,
+            razorpay_receipt: receipt,
+            paymentStatus: PAYMENT_STATUS.PENDING,
+            status: ORDER_STATUS.PENDING,
+            currentStep: 0,
+            statusHistory: [{ step: 0, label: ORDER_STATUS.PENDING, date: new Date() }],
+        });
+
+        // update saved address
+        await User.findByIdAndUpdate(req.userId, {
+            $set: {
+                "address.fullName": address.fullName,
+                "address.phoneNumber": address.phoneNumber,
+                "address.emailId": user.emailId,
+                "address.state": address.state,
+                "address.city": address.city,
+                "address.pinCode": address.pinCode,
+                "address.addr1": address.addr1,
             }
+        });
 
-            orderDoc.updatedAt = new Date();
-            await orderDoc.save();
-        } else {
-            // 🆕 New order
-            orderDoc = await Order.create({
-                emailId,
-                orderId: `ORD-${uuidv4().split("-")[0].toUpperCase()}`,
-                items,
-                total,
-                shipping,
-                address,
-                razorpay_order_id: rzOrder.id,
-                razorpay_receipt: receipt,
-                paymentStatus: PAYMENT_STATUS.PENDING,
-                status: ORDER_STATUS.PENDING,
-                statusHistory: [{ step: 0, label: ORDER_STATUS.PENDING, date: new Date() }],
-                currentStep: 0,
-            });
-        }
+        await User.findByIdAndUpdate(req.userId, { $addToSet: { orders: orderId } });
 
-        // 👤 Update user doc (unchanged)
-        const updateUser = { $addToSet: { orders: orderDoc.orderId } };
-        const addrSet = {};
-        if (address.fullName) addrSet.fullName = address.fullName;
-        if (address.phoneNumber) addrSet.phoneNumber = address.phoneNumber;
-        if (address.emailId) addrSet.emailId = address.emailId;
-        if (address.state) addrSet["address.state"] = address.state;
-        if (address.city) addrSet["address.city"] = address.city;
-        if (address.pincode) addrSet["address.pinCode"] = address.pincode;
-        if (address.addr1) addrSet["address.addr1"] = address.addr1;
-        if (Object.keys(addrSet).length) updateUser.$set = addrSet;
-        await User.updateOne({ _id: user._id }, updateUser);
+        await sendOrderStatusEmail(order, "PENDING");
 
-        // ▶️ Response for Razorpay init
         res.json({
             success: true,
             key: process.env.RAZORPAY_KEY_ID,
-            razorpay_order_id: orderDoc.razorpay_order_id,
+            razorpay_order_id: rzOrder.id,
             amount: amountPaise,
             currency: "INR",
-            orderId: orderDoc.orderId,
+            orderId,
         });
     } catch (err) {
-        console.error("Payment /order error:", err);
-        res.status(500).json({ success: false, message: "Failed to create order" });
+        return res.status(500).json({ success: false, message: "Failed" });
     }
 });
 
 
-// 🧾 Verify Razorpay Payment
-router.post("/payment/verify", async (req, res) => {
+/* -----------------------------------------------------
+   🧾 Client Verification (Signature Only)
+   ❗ Do NOT set PAID here — webhook handles final.
+----------------------------------------------------- */
+router.post("/verify", verifySession, async (req, res) => {
     try {
-        const { razorpay_order_id, razorpay_payment_id, razorpay_signature, emailId, orderId } = req.body;
-        if (!emailId) return res.status(400).json({ success: false, message: "emailId is required" });
+        const { razorpay_order_id, razorpay_payment_id, razorpay_signature, orderId } = req.body;
 
-        const order = await Order.findOne({ orderId, emailId });
+        const user = await User.findById(req.userId);
+        const order = await Order.findOne({
+            orderId,
+            $or: [{ emailId: user.emailId }, { phoneNumber: user.phoneNumber }],
+        });
+
         if (!order) return res.status(404).json({ success: false, message: "Order not found" });
 
-        if (order.paymentStatus === PAYMENT_STATUS.PAID) {
-            return res.json({ success: true, message: "Already paid", order });
-        }
-        if (order.paymentStatus === PAYMENT_STATUS.FAILED) {
-            return res.status(400).json({ success: false, message: "Payment already failed" });
-        }
-
-        const generatedSignature = crypto
+        const sign = crypto
             .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
             .update(`${razorpay_order_id}|${razorpay_payment_id}`)
             .digest("hex");
 
-        if (generatedSignature !== razorpay_signature) {
+        if (sign !== razorpay_signature) {
             order.paymentStatus = PAYMENT_STATUS.FAILED;
             order.status = ORDER_STATUS.PAYMENT_FAILED;
-            order.currentStep = 0;
             order.failedPaymentId = razorpay_payment_id;
             order.statusHistory.push({ step: 0, label: ORDER_STATUS.PAYMENT_FAILED, date: new Date() });
-            order.updatedAt = new Date();
             await order.save();
-            return res.status(400).json({ success: false, message: "Signature mismatch" });
+            return res.status(400).json({ success: false, message: "Invalid signature" });
         }
 
-        // ✅ Persist the verified RZ ids too
-        order.razorpay_order_id = razorpay_order_id;      // <<< add this
+        order.clientVerified = true;
+        order.razorpay_order_id = razorpay_order_id;
         order.razorpay_payment_id = razorpay_payment_id;
         order.razorpay_signature = razorpay_signature;
-        order.paymentStatus = PAYMENT_STATUS.PAID;
-        order.status = ORDER_STATUS.ORDER_PLACED;
-        order.currentStep = 1;
-        order.statusHistory.push({ step: 1, label: ORDER_STATUS.ORDER_PLACED, date: new Date() });
-        order.updatedAt = new Date();
         await order.save();
 
-        const user = await User.findOne({ emailId });
-        if (user) {
-            if (!user.orders) user.orders = [];
-            if (!user.orders.includes(order.orderId)) user.orders.push(order.orderId);
-            user.cart = [];
-            await user.save();
-        }
+        // wipe cart instantly for UX
+        user.cart = [];
+        await user.save();
 
-        return res.json({ success: true, message: "Payment verified", order });
-    } catch (err) {
-        console.error("❌ Payment verify error:", err);
-        return res.status(500).json({ success: false, message: "Server error during verification" });
+        return res.json({ success: true, message: "Payment verified (client)" });
+    } catch {
+        return res.status(500).json({ success: false, message: "Server error" });
     }
 });
 
-// ✅ Final confirm (frontend call after Razorpay success)
-router.post("/payment/:orderId/confirm", async (req, res) => {
+/* -----------------------------------------------------
+   ✅ Client Confirmation after Razorpay success
+   DOES NOT change payment status (webhook does)
+----------------------------------------------------- */
+router.post("/:orderId/confirm", verifySession, async (req, res) => {
     try {
         const { orderId } = req.params;
 
-        const order = await Order.findOne({ orderId });
+        const user = await User.findById(req.userId);
+        if (!user) return res.status(404).json({ success: false, message: "User not found" });
+
+        const order = await Order.findOne({
+            orderId,
+            $or: [{ emailId: user.emailId }, { phoneNumber: user.phoneNumber }],
+        });
+
         if (!order) return res.status(404).json({ success: false, message: "Order not found" });
 
-        // ✅ If payment done but status not updated → fix it here
-        if (order.paymentStatus === PAYMENT_STATUS.PAID && order.currentStep < 1) {
-            order.status = ORDER_STATUS.ORDER_PLACED;
-            order.currentStep = 1;
-            order.statusHistory.push({
-                step: 1,
-                label: ORDER_STATUS.ORDER_PLACED,
-                date: new Date(),
-            });
-            order.updatedAt = new Date();
+        // ✅ Mark client confirmation without touching payment status
+        if (!order.clientConfirmed) {
+            order.clientConfirmed = true;
+            order.clientConfirmedAt = new Date();
             await order.save();
-            return res.json({ success: true, message: "Order confirmed", order });
         }
 
-        // ❗ If payment pending, don't block but tell UI
-        if (order.paymentStatus !== PAYMENT_STATUS.PAID) {
-            return res.status(200).json({
-                success: true,
-                message: "Order created but payment pending",
-                order
-            });
-        }
-
-        // ✅ Already placed — just return it
-        return res.json({ success: true, message: "Order already confirmed", order });
+        return res.json({ success: true });
     } catch (err) {
         console.error("Order confirm error:", err);
-        res.status(500).json({ success: false, message: "Server error" });
+        return res.status(500).json({ success: false, message: "Server error" });
+    }
+});
+
+/* -----------------------------------------------------
+   🚫 Cancel order → trigger refund
+   ❗ Webhook completes refund result
+----------------------------------------------------- */
+router.post("/order/:orderId/cancel", verifySession, async (req, res) => {
+    try {
+        const { orderId } = req.params;
+        const user = await User.findById(req.userId);
+
+        const order = await Order.findOne({
+            orderId,
+            $or: [{ emailId: user.emailId }, { phoneNumber: user.phoneNumber }],
+        });
+
+        if (!order) return res.status(404).json({ success: false, message: "Order not found" });
+        if (order.currentStep >= 3)
+            return res.status(400).json({ success: false, message: "Cannot cancel" });
+
+        order.status = ORDER_STATUS.CANCELLED;
+        order.currentStep = -1;
+        order.refundContext = "CANCEL";
+
+        if (order.paymentStatus === PAYMENT_STATUS.PAID) {
+            order.paymentStatus = PAYMENT_STATUS.REFUND_INITIATED;
+            try {
+                const refund = await razorpay.payments.refund.create({
+                    payment_id: order.razorpay_payment_id,
+                    amount: Math.round(order.total * 100),
+                    speed: "optimum",
+                });
+                order.refundId = refund.id;
+                order.refundAttemptedAt = new Date();
+            } catch {
+                order.paymentStatus = PAYMENT_STATUS.REFUND_REQUESTED;
+                await sendOrderStatusEmail(order, "REFUND_FAILED");
+            }
+        }
+
+        order.statusHistory.push({ step: -1, label: ORDER_STATUS.CANCELLED, date: new Date() });
+        order.cancelledDate = new Date();
+        await order.save();
+        await sendOrderStatusEmail(order, "CANCELLED");
+        // restore cart
+        const merged = new Map();
+        for (const c of user.cart || []) merged.set(c.key, { ...c });
+        for (const o of order.items || []) {
+            const qty = o.qty ?? o.count ?? 1;
+            if (merged.has(o.key)) merged.get(o.key).count += qty;
+            else merged.set(o.key, { ...o, count: qty });
+        }
+        user.cart = Array.from(merged.values());
+        await user.save();
+        return res.json({ success: true, order, cart: user.cart });
+    } catch {
+        return res.status(500).json({ success: false, message: "Server error" });
     }
 });
 

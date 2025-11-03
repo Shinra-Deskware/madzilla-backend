@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 const CartItemSchema = new mongoose.Schema(
     {
         key: { type: String },
-        productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
+        productId: { type: String },
         title: { type: String },
         price: { type: Number },
         count: { type: Number, default: 1, min: 0 },
@@ -27,13 +27,19 @@ const userSchema = new mongoose.Schema(
             addr1: { type: String, default: '' },
         },
 
-        // keep as strings for now to avoid ripple changes
         orders: [{ type: String }],
-
-        // structured but lenient
         cart: { type: [CartItemSchema], default: [] },
     },
     { timestamps: true }
 );
+
+/** ✅ Ensure at least one identifier exists */
+userSchema.pre('validate', function (next) {
+    if (!this.emailId && !this.phoneNumber) {
+        next(new Error('Either emailId or phoneNumber is required'));
+    } else {
+        next();
+    }
+});
 
 export default mongoose.model('User', userSchema);

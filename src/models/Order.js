@@ -4,7 +4,7 @@ import { PAYMENT_STATUS, ORDER_STATUS } from '../constants/constants.js';
 const OrderItemSchema = new mongoose.Schema(
     {
         key: { type: String },
-        productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
+        productId: { type: String },
         title: { type: String },
         price: { type: Number },
         qty: { type: Number, default: 1, min: 1 },
@@ -63,6 +63,8 @@ const orderSchema = new mongoose.Schema(
         adminNotes: String,
         refundId: String,
         refundDate: Date,
+        refundAttemptedAt: Date,
+        refundRetries: { type: Number, default: 0 },
     },
     { timestamps: true }
 );
@@ -73,5 +75,13 @@ orderSchema.index({ emailId: 1 });
 orderSchema.index({ razorpay_order_id: 1 });
 // for your verify query pattern
 orderSchema.index({ emailId: 1, razorpay_order_id: 1 });
+/** ✅ Ensure at least one user identifier exists on order */
+orderSchema.pre('validate', function (next) {
+    if (!this.emailId && !this.phoneNumber) {
+        next(new Error('Either emailId or phoneNumber is required on order'));
+    } else {
+        next();
+    }
+});
 
 export default mongoose.model('Order', orderSchema);
