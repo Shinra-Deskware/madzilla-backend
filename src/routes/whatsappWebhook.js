@@ -5,7 +5,7 @@ const router = express.Router();
 
 // ✅ Verification endpoint (Meta will call this once)
 router.get("/", (req, res) => {
-    const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN;
+    const VERIFY_TOKEN = process.env.WHATSAPP_WEBHOOK_SECRET;
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
