@@ -11,6 +11,8 @@ import morgan from "morgan";
 import fs from "fs";
 import path from "path";
 import cron from "node-cron";
+// ✅ WhatsApp Webhook handler
+import whatsappWebhook from "./routes/whatsappWebhook.js";
 
 // Routes
 import userRoutes from "./routes/userRoutes.js";
@@ -40,6 +42,7 @@ app.post(
     express.raw({ type: "*/*" }),
     razorWebhook
 );
+app.use("/webhook/whatsapp", express.json(), whatsappWebhook);
 
 /* -----------------------------------------------------
    ✅ Middleware

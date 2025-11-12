@@ -47,7 +47,6 @@ export function renderEmail({
     <div style="max-width:640px;margin:0 auto;background:${BRAND.cardBg};border:1px solid ${BRAND.border};border-radius:14px;overflow:hidden;">
       <!-- Header -->
       <div style="padding:18px 22px;border-bottom:1px solid ${BRAND.border};display:flex;align-items:center;gap:10px">
-        <div style="width:10px;height:10px;border-radius:50%;background:${BRAND.primary}"></div>
         <div style="font-family:Inter,Arial,sans-serif;color:${BRAND.text};letter-spacing:6px;font-weight:700;">
           ${BRAND.logoText}
         </div>

@@ -175,12 +175,15 @@ router.put("/orders/:orderId", async (req, res) => {
             ORDER_STATUS.RETURNED,
         ];
 
-        if (returnFlowStatuses.includes(order.status)) {
+        // If order is in return flow, allow paymentStatus updates but block status transitions here
+        if (returnFlowStatuses.includes(order.status) && req.body.status && req.body.status !== order.status) {
             return res.status(400).json({
                 success: false,
-                message: "Order in return process — update via return routes only",
+                message: "Status changes during return flow must use return-specific routes",
             });
         }
+        // paymentStatus updates are permitted while in return flow
+
 
         // Cancel
         if (status === ORDER_STATUS.CANCELLED) {
@@ -189,6 +192,7 @@ router.put("/orders/:orderId", async (req, res) => {
                     ? PAYMENT_STATUS.REFUND_REQUESTED
                     : PAYMENT_STATUS.CANCELLED;
             order.status = ORDER_STATUS.CANCELLED;
+            order.refundContext = "CANCEL"
             order.currentStep = -1;
             order.statusHistory.push({
                 step: -1,
@@ -276,25 +280,72 @@ router.put("/orders/:orderId/return-received", async (req, res) => {
         if (order.status !== ORDER_STATUS.RETURN_ACCEPTED)
             return res.status(400).json({ message: "Item not approved for return yet" });
 
+        // optimistic update to reflect item received
         order.status = ORDER_STATUS.RETURN_RECEIVED;
         order.paymentStatus = PAYMENT_STATUS.REFUND_INITIATED;
+        order.refundContext = "RETURN";
         if (adminNotes) order.adminNotes = adminNotes;
+        order.returnReceivedDate = new Date();
         order.updatedAt = new Date();
+
+        // persist initial state
         await order.save();
 
-        // ✅ Email: item received, refund starting
-        try {
-            await sendOrderStatusEmail(order, "RETURN_RECEIVED");
-        } catch (mailErr) {
-            console.error("Return mail error:", mailErr);
+        // Try to create Razorpay refund immediately if we have payment id
+        if (order.razorpay_payment_id) {
+            try {
+                const amountPaise = Math.round((Number(order.total || 0) + Number(order.shipping || 0)) * 100);
+                // create refund via Razorpay
+                const refund = await razor.payments.refund.create({
+                    payment_id: order.razorpay_payment_id,
+                    amount: amountPaise,
+                    speed: "optimum",
+                });
+
+                // update order with refund metadata (webhook will confirm final status)
+                order.refundId = refund.id;
+                order.refundAttemptedAt = new Date();
+                order.paymentStatus = PAYMENT_STATUS.REFUND_INITIATED;
+                order.refundContext = "RETURN";
+                await order.save();
+
+                // send email for RETURN_RECEIVED
+                try { await sendOrderStatusEmail(order, "RETURN_RECEIVED"); } catch (e) { console.error(e); }
+
+                return res.json({
+                    success: true,
+                    message: "Return received — refund initiated with Razorpay",
+                    order,
+                    refundId: refund.id,
+                });
+            } catch (err) {
+                console.error("Admin refund create failed:", err);
+
+                // fallback: mark as REFUND_REQUESTED so retry job/admin can pick it up
+                order.paymentStatus = PAYMENT_STATUS.REFUND_REQUESTED;
+                order.refundAttemptedAt = new Date();
+                order.refundRetries = (order.refundRetries || 0) + 1;
+                await order.save();
+
+                try { await sendOrderStatusEmail(order, "RETURN_RECEIVED"); } catch (e) { console.error(e); }
+
+                return res.status(200).json({
+                    success: true,
+                    message: "Return received — refund request queued (failed to create refund with Razorpay).",
+                    order,
+                });
+            }
         }
 
-        return res.json({ success: true, message: "Return received, refund initiated", order });
+        // No razorpay payment id — respond and let admin manually process refund
+        try { await sendOrderStatusEmail(order, "RETURN_RECEIVED"); } catch (e) { console.error(e); }
+        return res.json({ success: true, message: "Return received, refund initiated (no payment id found)", order });
     } catch (err) {
         console.error("Return receive error:", err);
         res.status(500).json({ success: false, message: "Error updating return" });
     }
 });
+
 /* -----------------------------------------------------
    ✅ Admin Approves Return Request
 ----------------------------------------------------- */
@@ -386,8 +437,10 @@ router.put("/orders/:orderId/refund", async (req, res) => {
         if (!order.razorpay_payment_id)
             return res.status(400).json({ message: "Missing payment ID for refund" });
 
-        const refund = await razor.payments.refund(order.razorpay_payment_id, {
-            amount: Math.round(order.total * 100),
+        const amountPaise = Math.round((Number(order.total || 0) + Number(order.shipping || 0)) * 100);
+        // create refund via Razorpay
+        const refund = await razor.payments.refund.create(order.razorpay_payment_id, {
+            amount: amountPaise,
             speed: "optimum",
         });
 
@@ -413,5 +466,18 @@ router.put("/orders/:orderId/refund", async (req, res) => {
     }
 });
 
+router.put("/orders/:orderId/refund-complete", adminAuth, async (req, res) => {
+    const { orderId } = req.params;
+    const { refundId } = req.body;
+    const order = await Order.findOne({ orderId });
+    if (!order) return res.status(404).json({ success: false, message: "Not found" });
+    order.paymentStatus = PAYMENT_STATUS.REFUND_DONE;
+    order.refundId = refundId || order.refundId;
+    order.refundDate = new Date();
+    if (order.refundContext === "RETURN") order.status = ORDER_STATUS.RETURNED;
+    await order.save();
+    await sendOrderStatusEmail(order, "REFUND_DONE");
+    return res.json({ success: true, order });
+});
 
 export default router;

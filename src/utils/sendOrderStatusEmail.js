@@ -17,11 +17,11 @@ export async function sendOrderStatusEmail(order, type) {
     {
       title: "Order Details",
       rows: [
-        { k: "Order ID", v: orderId },
-        { k: "Total", v: `₹${total}` },
-        ...(order?.paymentMethod ? [{ k: "Payment", v: order.paymentMethod }] : []),
-        ...(order?.paymentStatus ? [{ k: "Payment Status", v: order.paymentStatus.replaceAll("_", " ") }] : []),
-        ...(order?.status ? [{ k: "Order Status", v: order.status.replaceAll("_", " ") }] : []),
+        { k: "Order ID: ", v: orderId },
+        { k: "Total: ", v: `₹${total}` },
+        ...(order?.paymentMethod ? [{ k: "Payment: ", v: order.paymentMethod }] : []),
+        ...(order?.paymentStatus ? [{ k: "Payment Status: ", v: order.paymentStatus.replaceAll("_", " ") }] : []),
+        ...(order?.status ? [{ k: "Order Status: ", v: order.status.replaceAll("_", " ") }] : []),
       ],
     },
   ];

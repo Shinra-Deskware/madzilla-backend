@@ -70,7 +70,6 @@ const orderSchema = new mongoose.Schema(
 );
 
 // Indexes
-orderSchema.index({ orderId: 1 }, { unique: true });
 orderSchema.index({ emailId: 1 });
 orderSchema.index({ razorpay_order_id: 1 });
 // for your verify query pattern

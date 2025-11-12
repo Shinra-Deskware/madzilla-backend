@@ -11,14 +11,10 @@ export default async function razorpayWebhook(req, res) {
         const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
         const signature = req.headers["x-razorpay-signature"];
 
-        const expected = crypto
-            .createHmac("sha256", secret)
-            .update(req.body)
-            .digest("hex");
-
+        const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from(JSON.stringify(req.body));
+        const expected = crypto.createHmac("sha256", secret).update(raw).digest("hex");
         if (signature !== expected) return res.status(400).send("Invalid signature");
-
-        const evt = JSON.parse(req.body);
+        const evt = JSON.parse(raw.toString("utf8"));
         const type = evt?.event || "";
 
         const markHistory = (order, step, label) => {
@@ -112,7 +108,8 @@ export default async function razorpayWebhook(req, res) {
             const r = evt.payload?.refund?.entity;
             if (!r) return res.send("ok");
 
-            const order = await Order.findOne({ razorpay_payment_id: r.payment_id });
+            let order = await Order.findOne({ razorpay_payment_id: r.payment_id });
+            if (!order && r?.id) order = await Order.findOne({ refundId: r.id });
             if (!order) return res.send("ok");
 
             if (![PAYMENT_STATUS.REFUND_INITIATED, PAYMENT_STATUS.REFUND_DONE].includes(order.paymentStatus)) {
@@ -132,7 +129,8 @@ export default async function razorpayWebhook(req, res) {
             const r = evt.payload?.refund?.entity;
             if (!r) return res.send("ok");
 
-            const order = await Order.findOne({ razorpay_payment_id: r.payment_id });
+            let order = await Order.findOne({ razorpay_payment_id: r.payment_id });
+            if (!order && r?.id) order = await Order.findOne({ refundId: r.id });
             if (!order) return res.send("ok");
 
             if (!(order.paymentStatus === PAYMENT_STATUS.REFUND_DONE && order.refundId === r.id)) {
@@ -142,9 +140,10 @@ export default async function razorpayWebhook(req, res) {
 
                 const reason = inferRefundContext(order);
                 if (reason === "RETURN") {
-                    order.status = ORDER_STATUS.REFUND_COMPLETED ?? ORDER_STATUS.RETURN_COMPLETED ?? order.status;
-                    markHistory(order, -2, order.status);
-                } else {
+                    order.status = ORDER_STATUS.RETURNED;
+                    markHistory(order, -2, ORDER_STATUS.RETURNED);
+                }
+                else {
                     order.status = ORDER_STATUS.CANCELLED;
                     markHistory(order, -1, ORDER_STATUS.CANCELLED);
                 }
@@ -163,7 +162,8 @@ export default async function razorpayWebhook(req, res) {
             const r = evt.payload?.refund?.entity;
             if (!r) return res.send("ok");
 
-            const order = await Order.findOne({ razorpay_payment_id: r.payment_id });
+            let order = await Order.findOne({ razorpay_payment_id: r.payment_id });
+            if (!order && r?.id) order = await Order.findOne({ refundId: r.id });
             if (!order) return res.send("ok");
 
             if (!(order.paymentStatus === PAYMENT_STATUS.REFUND_FAILED && order.refundId === r.id)) {

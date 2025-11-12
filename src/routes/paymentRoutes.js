@@ -157,9 +157,9 @@ router.post("/neworder", verifySession, async (req, res) => {
         // Save/attach to user
         await User.findByIdAndUpdate(req.userId, {
             $set: {
-                "address.fullName": address.fullName,
-                "address.phoneNumber": address.phoneNumber,
-                "address.emailId": user.emailId,
+                fullName: address.fullName,
+                phoneNumber: address.phoneNumber,
+                emailId: user.emailId,
                 "address.state": address.state,
                 "address.city": address.city,
                 "address.pinCode": address.pinCode,
