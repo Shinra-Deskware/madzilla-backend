@@ -1,10 +1,8 @@
 // routes/whatsappWebhook.js
-import WhatsappMessage from "../models/whatsappMessageModel.js";
 import express from "express";
+import WhatsappChat from "../models/whatsappChatModel.js";
 
 const router = express.Router();
-
-// ✅ Verification endpoint (Meta will call this once)
 
 router.post("/", async (req, res) => {
     try {
@@ -14,14 +12,28 @@ router.post("/", async (req, res) => {
 
         if (messages) {
             for (const msg of messages) {
-                await WhatsappMessage.create({
-                    from: msg.from,
-                    to: changes.value.metadata?.display_phone_number,
-                    type: msg.type,
-                    body: msg.text?.body || null,
-                    messageId: msg.id,
-                    timestamp: msg.timestamp,
-                });
+                const phone = msg.from;
+
+                await WhatsappChat.findByIdAndUpdate(
+                    phone,
+                    {
+                        $push: {
+                            messages: {
+                                from: msg.from,
+                                to: changes.value.metadata?.display_phone_number,
+                                type: msg.type,
+                                body: msg.text?.body || null,
+                                messageId: msg.id,
+                                timestamp: msg.timestamp,
+                            },
+                        },
+                        $set: {
+                            lastMessage: msg.text?.body || "",
+                            lastTime: new Date(parseInt(msg.timestamp) * 1000),
+                        },
+                    },
+                    { upsert: true, new: true }
+                );
             }
         }
 
@@ -31,6 +43,5 @@ router.post("/", async (req, res) => {
         res.sendStatus(500);
     }
 });
-
 
 export default router;
