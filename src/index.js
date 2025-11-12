@@ -25,6 +25,7 @@ import invoiceRoutes from "./routes/invoiceRoutes.js";
 import complaintRoutes from "./routes/complaintRoutes.js";
 import adminComplaints from "./routes/adminComplaints.js";
 import refundRetryJob from "./jobs/refundRetry.js";
+import whatsappMessages from "./routes/whatsappMessages.js";
 
 // ✅ Razorpay webhook handler
 import razorWebhook from "./routes/razorWebhook.js";
@@ -90,6 +91,7 @@ app.use("/api/otp", otpRoutes);
 app.use("/api/complaints", complaintRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/admin/complaints", adminComplaints);
+app.use("/api/whatsapp/messages", whatsappMessages);
 
 /* -----------------------------------------------------
    ✅ Global Error
