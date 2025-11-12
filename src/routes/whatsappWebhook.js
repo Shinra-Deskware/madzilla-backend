@@ -1,33 +1,36 @@
 // routes/whatsappWebhook.js
+import WhatsappMessage from "../models/whatsappMessageModel.js";
 import express from "express";
 
 const router = express.Router();
 
 // ✅ Verification endpoint (Meta will call this once)
-router.get("/", (req, res) => {
-    const VERIFY_TOKEN = process.env.WHATSAPP_WEBHOOK_SECRET;
-    const mode = req.query["hub.mode"];
-    const token = req.query["hub.verify_token"];
-    const challenge = req.query["hub.challenge"];
 
-    if (mode === "subscribe" && token === VERIFY_TOKEN) {
-        console.log("✅ WhatsApp webhook verified successfully");
-        res.status(200).send(challenge);
-    } else {
-        console.warn("❌ WhatsApp webhook verification failed");
-        res.sendStatus(403);
-    }
-});
-
-// ✅ Receive incoming WhatsApp messages or status updates
-router.post("/", (req, res) => {
+router.post("/", async (req, res) => {
     try {
-        console.log("📩 WhatsApp event:", JSON.stringify(req.body, null, 2));
-        res.sendStatus(200); // must respond fast
+        const entry = req.body.entry?.[0];
+        const changes = entry?.changes?.[0];
+        const messages = changes?.value?.messages;
+
+        if (messages) {
+            for (const msg of messages) {
+                await WhatsappMessage.create({
+                    from: msg.from,
+                    to: changes.value.metadata?.display_phone_number,
+                    type: msg.type,
+                    body: msg.text?.body || null,
+                    messageId: msg.id,
+                    timestamp: msg.timestamp,
+                });
+            }
+        }
+
+        res.sendStatus(200);
     } catch (err) {
-        console.error("❌ Error handling WhatsApp webhook:", err);
+        console.error("❌ Error saving WhatsApp message:", err);
         res.sendStatus(500);
     }
 });
+
 
 export default router;
