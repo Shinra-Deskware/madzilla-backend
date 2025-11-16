@@ -12,7 +12,6 @@ import fs from "fs";
 import path from "path";
 import cron from "node-cron";
 // ✅ WhatsApp Webhook handler
-import whatsappWebhook from "./routes/whatsappWebhook.js";
 
 // Routes
 import userRoutes from "./routes/userRoutes.js";
@@ -25,9 +24,6 @@ import invoiceRoutes from "./routes/invoiceRoutes.js";
 import complaintRoutes from "./routes/complaintRoutes.js";
 import adminComplaints from "./routes/adminComplaints.js";
 import refundRetryJob from "./jobs/refundRetry.js";
-import whatsappMessages from "./routes/whatsappMessages.js";
-import whatsappChats from "./routes/whatsappChats.js";
-import whatsappSend from "./routes/whatsappSend.js";
 
 // ✅ Razorpay webhook handler
 import razorWebhook from "./routes/razorWebhook.js";
@@ -45,7 +41,6 @@ app.post(
     express.raw({ type: "*/*" }),
     razorWebhook
 );
-app.use("/webhook/whatsapp", express.json(), whatsappWebhook);
 
 /* -----------------------------------------------------
    ✅ Middleware
@@ -92,10 +87,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/otp", otpRoutes);
 app.use("/api/complaints", complaintRoutes);
 app.use("/api/admin", adminRoutes);
-app.use("/api/admin/complaints", adminComplaints);
-app.use("/api/whatsapp/messages", whatsappMessages);
-app.use("/api/whatsapp/chats", whatsappChats);
-app.use("/api/whatsapp", whatsappSend);
+app.use("/api/admin/complaints", adminComplaints)
 
 /* -----------------------------------------------------
    ✅ Global Error

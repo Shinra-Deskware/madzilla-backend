@@ -1,6 +1,5 @@
 import express from "express";
 import { v4 as uuid } from "uuid";
-import { sendWhtspOtp } from "../services/whatsappService.js";
 import { createOtp, verifyOtp } from "../utils/otpStore.js";
 import User from "../models/User.js";
 import jwt from "jsonwebtoken";
@@ -32,8 +31,6 @@ router.post("/send", async (req, res) => {
 
         if (isEmail) {
             await sendEmailOtp(identifier, otp);
-        } else {
-            await sendWhtspOtp(identifier, otp);
         }
 
         return res.json({ requestId, expiresIn: 300 });

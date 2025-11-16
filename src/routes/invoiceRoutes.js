@@ -24,21 +24,26 @@ router.get("/:orderId/download", async (req, res) => {
 });
 router.post("/generate", async (req, res) => {
     try {
-        const invoiceData = req.body; // ✅ full invoice JSON from frontend
+        console.log("⬅️  Incoming invoice request");
+        console.log("Body keys:", Object.keys(req.body));
+
+        const invoiceData = req.body;
 
         const pdfBuffer = await generateInvoicePdf(invoiceData);
 
+        console.log("PDF Buffer Length:", pdfBuffer?.length);
+
         res.set({
             "Content-Type": "application/pdf",
-            "Content-Disposition": `attachment; filename="invoice-${invoiceData.number}.pdf"`,
-            "Content-Length": pdfBuffer.length
+            "Content-Disposition": `attachment; filename="invoice-${invoiceData.number}.pdf"`
         });
 
         return res.send(pdfBuffer);
     } catch (err) {
-        console.error("Invoice Error:", err);
+        console.error("🔥 PDF GENERATION ERROR:", err);
         res.status(500).json({ message: "Failed to generate invoice" });
     }
 });
+
 
 export default router;
